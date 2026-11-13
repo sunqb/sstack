@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+# Copy one sstack flow plus optional language preset / add-ons into a project.
+# Never overwrites existing files. Methodology files of the two flows are never mixed.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+用法:
+  sstack-init [TARGET_DIR] --flow poteto|yetone [--preset typescript|python|shell] [--with tla,e2e]
+  sstack-init -h|--help
+
+必须显式指定 --flow。两种方法论互相隔离，没有默认值。
+
+  poteto   确定性检查优先（类型 / lint / 测试），短 AGENTS.md，
+           纠正写成检查而不是 LESSONS.md。
+  yetone   以 LESSONS.md 错题本为核心，配合并行 loop、规则升格
+           到 code-standards，以及真实环境验证。
+
+选项:
+  --preset  typescript | python | shell
+            未指定时按 TARGET 自动检测：
+              package.json                              → typescript
+              pyproject.toml / requirements*.txt /
+              setup.cfg / setup.py                      → python
+              其他                                      → shell
+            若同时出现 typescript 与 python 信号，则退出并要求显式指定。
+  --with    逗号分隔的可选附加件，默认不安装。目前支持: tla, e2e
+USAGE
+}
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="${SCRIPT_DIR}/${SCRIPT_SOURCE}" ;;
+  esac
+done
+BIN_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+SSTACK_ROOT="$(cd "${BIN_DIR}/.." && pwd)"
+
+FLOW=""
+PRESET=""
+WITH_RAW=""
+TARGET=""
+HELP=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      HELP=1
+      shift
+      ;;
+    --flow)
+      [ "$#" -ge 2 ] || die "--flow 需要一个参数：poteto 或 yetone"
+      FLOW="$2"
+      shift 2
+      ;;
+    --preset)
+      [ "$#" -ge 2 ] || die "--preset 需要一个参数：typescript、python 或 shell"
+      PRESET="$2"
+      shift 2
+      ;;
+    --with)
+      [ "$#" -ge 2 ] || die "--with 需要一个参数，例如 tla,e2e"
+      WITH_RAW="$2"
+      shift 2
+      ;;
+    --flow=*|--preset=*|--with=*)
+      die "请使用空格形式：--flow poteto（不支持 --flow=）"
+      ;;
+    --*)
+      die "未知选项：$1（见 --help）"
+      ;;
+    *)
+      if [ -n "$TARGET" ]; then
+        die "多余的参数：$1"
+      fi
+      TARGET="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ "$HELP" -eq 1 ]; then
+  usage
+  exit 0
+fi
+
+if [ -z "$FLOW" ]; then
+  cat >&2 <<'ERR'
+error: 必须指定 --flow poteto 或 --flow yetone（两种方法论互相隔离，没有默认值）。
+
+  poteto  确定性检查优先，短 AGENTS.md，不使用 LESSONS.md
+  yetone  以 LESSONS.md 错题本为核心，配合并行 loop 与规则升格
+
+用法: sstack-init [TARGET_DIR] --flow poteto|yetone [--preset typescript|python|shell] [--with tla,e2e]
+ERR
+  exit 2
+fi
+
+FLOW="$(printf '%s' "$FLOW" | tr '[:upper:]' '[:lower:]')"
+case "$FLOW" in
+  poteto|yetone) ;;
+  *) die "未知 flow：$FLOW（可选：poteto, yetone）" ;;
+esac
+
+FLOW_DIR="${SSTACK_ROOT}/flows/${FLOW}"
+[ -d "$FLOW_DIR" ] || die "找不到 flow 目录：$FLOW_DIR"
+
+TARGET="${TARGET:-.}"
+mkdir -p "$TARGET"
+TARGET="$(cd "$TARGET" && pwd)"
+
+has_ts_signal() { [ -f "$TARGET/package.json" ]; }
+has_py_signal() {
+  [ -f "$TARGET/pyproject.toml" ] || [ -f "$TARGET/requirements.txt" ] \
+    || [ -f "$TARGET/requirements-dev.txt" ] || [ -f "$TARGET/setup.cfg" ] \
+    || [ -f "$TARGET/setup.py" ]
+}
+
+if [ -z "$PRESET" ]; then
+  ts=0 py=0
+  has_ts_signal && ts=1
+  has_py_signal && py=1
+  if [ "$ts" -eq 1 ] && [ "$py" -eq 1 ]; then
+    die "TARGET 同时存在 package.json 与 Python 项目文件，无法自动选择 preset，请显式传入 --preset typescript|python|shell"
+  elif [ "$ts" -eq 1 ]; then
+    PRESET="typescript"
+    DETECTED="auto"
+  elif [ "$py" -eq 1 ]; then
+    PRESET="python"
+    DETECTED="auto"
+  else
+    PRESET="shell"
+    DETECTED="auto"
+  fi
+else
+  PRESET="$(printf '%s' "$PRESET" | tr '[:upper:]' '[:lower:]')"
+  DETECTED="explicit"
+fi
+
+case "$PRESET" in
+  typescript|python|shell) ;;
+  ts|js|node|frontend) PRESET="typescript" ;;
+  py|python3) PRESET="python" ;;
+  sh|generic|other) PRESET="shell" ;;
+  *) die "未知 preset：$PRESET（可选：typescript, python, shell）" ;;
+esac
+
+PRESET_DIR="${SSTACK_ROOT}/core/presets/${PRESET}"
+[ -d "$PRESET_DIR" ] || die "找不到 preset 目录：$PRESET_DIR"
+
+ADDONS=()
+if [ -n "$WITH_RAW" ]; then
+  IFS=',' read -r -a raw_parts <<< "$WITH_RAW"
+  for item in "${raw_parts[@]}"; do
+    item="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    [ -n "$item" ] || continue
+    case "$item" in
+      tla|e2e) ADDONS+=("$item") ;;
+      prop|property|properties)
+        die "性质测试示例已包含在 e2e 附加件中，请使用 --with e2e"
+        ;;
+      *) die "未知附加件：$item（可选：tla, e2e）" ;;
+    esac
+  done
+fi
+
+created=0
+skipped=0
+CREATED_PATHS=()
+SKIPPED_PATHS=()
+
+# Copy $1 to $2 (absolute). Record paths relative to TARGET when possible.
+install_file() {
+  local src="$1" dest="$2"
+  local rel="$dest"
+  case "$dest" in
+    "$TARGET"/*) rel="${dest#"$TARGET"/}" ;;
+  esac
+  mkdir -p "$(dirname "$dest")"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    printf 'skip: %s\n' "$rel"
+    skipped=$((skipped + 1))
+    SKIPPED_PATHS+=("$rel")
+    return 0
+  fi
+  cp "$src" "$dest"
+  if [ -x "$src" ]; then
+    chmod +x "$dest"
+  fi
+  printf 'create: %s\n' "$rel"
+  created=$((created + 1))
+  CREATED_PATHS+=("$rel")
+}
+
+# Copy a directory tree so that files under $1 appear under $2, preserving relative paths.
+install_tree() {
+  local src_root="$1" dest_root="$2"
+  [ -d "$src_root" ] || return 0
+  local src rel dest
+  while IFS= read -r src; do
+    rel="${src#"$src_root"/}"
+    dest="${dest_root}/${rel}"
+    install_file "$src" "$dest"
+  done < <(find "$src_root" -type f ! -name '.gitkeep' | sort)
+}
+
+echo "sstack-init"
+echo "  flow:    $FLOW"
+echo "  preset:  $PRESET (${DETECTED:-explicit})"
+if [ "${#ADDONS[@]}" -gt 0 ]; then
+  echo "  addons:  ${ADDONS[*]}"
+else
+  echo "  addons:  (none)"
+fi
+echo "  target:  $TARGET"
+echo
+
+# 1) methodology-neutral verify entrypoint
+install_file "${SSTACK_ROOT}/core/scripts/verify.sh" "${TARGET}/scripts/verify.sh"
+install_file "${SSTACK_ROOT}/core/scripts/verify.d/README.md" "${TARGET}/scripts/verify.d/README.md"
+
+# 2) selected flow only (never the other flow)
+install_tree "${FLOW_DIR}/templates" "$TARGET"
+if [ -d "${FLOW_DIR}/playbooks" ]; then
+  install_tree "${FLOW_DIR}/playbooks" "${TARGET}/docs/sstack/playbooks"
+fi
+if [ -d "${FLOW_DIR}/skills" ]; then
+  install_tree "${FLOW_DIR}/skills" "${TARGET}/skills"
+fi
+
+# 3) language preset
+install_tree "$PRESET_DIR" "$TARGET"
+
+# 4) optional add-ons
+for addon in "${ADDONS[@]+"${ADDONS[@]}"}"; do
+  [ -n "$addon" ] || continue
+  addon_dir="${SSTACK_ROOT}/core/addons/${addon}"
+  [ -d "$addon_dir" ] || die "找不到附加件目录：$addon_dir"
+  install_tree "$addon_dir" "$TARGET"
+done
+
+# 5) record the chosen flow, without describing the other methodology
+if [ ! -e "${TARGET}/.sstack/flow" ]; then
+  mkdir -p "${TARGET}/.sstack"
+  printf '%s\n' "$FLOW" > "${TARGET}/.sstack/flow"
+  printf 'create: %s\n' ".sstack/flow"
+  created=$((created + 1))
+  CREATED_PATHS+=(".sstack/flow")
+else
+  existing="$(tr -d '[:space:]' < "${TARGET}/.sstack/flow" || true)"
+  if [ -n "$existing" ] && [ "$existing" != "$FLOW" ]; then
+    printf 'skip: .sstack/flow（已记录为 %s，不会改成 %s；两种 flow 不可混用）\n' "$existing" "$FLOW"
+  else
+    printf 'skip: .sstack/flow\n'
+  fi
+  skipped=$((skipped + 1))
+  SKIPPED_PATHS+=(".sstack/flow")
+fi
+
+echo
+echo "done: created=$created skipped=$skipped"
+echo
+echo "接下来："
+echo "  1. 阅读 docs/sstack/playbooks/，按所选 flow 补全占位文档。"
+case "$FLOW" in
+  poteto)
+    echo "  2. 填写 docs/features.md；被纠正时走纠正闭环，把规则写成检查，只在 docs/corrections.md 留一行对照。"
+    echo "     不要创建 LESSONS.md —— 这是 poteto flow 明确避免的做法。"
+    ;;
+  yetone)
+    echo "  2. 改代码前阅读 LESSONS.md 与 docs/code-standards.md。"
+    echo "     夜间复盘按 playbooks 把教训写成「规则 + 原因 + 证据 + Seen」，满 3 个不同日期再升格。"
+    ;;
+esac
+case "$PRESET" in
+  typescript)
+    echo "  3. TypeScript preset 已放入 tsconfig.strict.json、eslint 示例与 package.scripts.example.json。"
+    echo "     请把脚本合并进现有 package.json，不要覆盖你自己的依赖声明。空项目可 extends tsconfig.strict.json。"
+    ;;
+  python)
+    echo "  3. Python preset 写在 pyproject.sstack.toml。空项目可改名为 pyproject.toml；已有项目请合并 [tool.ruff] / [tool.mypy] / [tool.pytest.ini_options] / [tool.pyright]。"
+    ;;
+  shell)
+    echo "  3. 通用 preset 提供 Makefile.sstack.example。把你的检查接到 scripts/verify.sh，或在 scripts/verify.d/ 放可执行钩子。"
+    ;;
+esac
+if [ "${#ADDONS[@]}" -gt 0 ]; then
+  echo "  4. 已复制附加件：${ADDONS[*]}。按各目录 README 安装 TLC 或 Playwright 后再交给 verify。"
+fi
+echo "  最后在项目根运行：bash scripts/verify.sh"
+echo "  全绿之前，不要把工作标成完成。"

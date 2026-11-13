@@ -1,0 +1,32 @@
+# sstack Python 起步配置。空项目可改名为 pyproject.toml；
+# 已有项目请把下列工具表合并进现有 pyproject.toml，不要整文件覆盖。
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+files = ["src", "tests"]
+pretty = true
+# 还没有 src/ 时，可暂时把 files 改成你的包路径。
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

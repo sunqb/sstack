@@ -1,0 +1,9 @@
+{
+  "_comment": "把这些 scripts 合并进项目的 package.json，不要用本文件覆盖已有 package.json。",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "verify": "bash scripts/verify.sh"
+  }
+}

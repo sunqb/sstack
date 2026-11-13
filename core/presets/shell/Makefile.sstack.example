@@ -1,0 +1,4 @@
+# 把 verify 目标抄进你的 Makefile，或直接运行 bash scripts/verify.sh
+.PHONY: verify
+verify:
+	bash scripts/verify.sh

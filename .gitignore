@@ -1,0 +1,17 @@
+.DS_Store
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+node_modules/
+dist/
+build/
+out/
+coverage/
+playwright-report/
+test-results/
+e2e/evidence/
+*.log

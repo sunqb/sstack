@@ -20,7 +20,7 @@ linters:
       forbid:
         - pattern: fmt\.Print.*
           msg: do not call fmt.Print*; use a logger
-        - pattern: panic\(
+        - pattern: ^panic$
           msg: do not panic in library code; return an error
   exclusions:
     generated: lax

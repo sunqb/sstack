@@ -1,3 +1,5 @@
+人类对 agent 说「用 sstack 的 poteto 流程接管这个项目」即可。下面是 agent 执行 adopt 时的要点。
+
 # 已有项目接入 poteto flow
 
 `sstack-init` **不会覆盖已有文件**。重复运行是安全的。

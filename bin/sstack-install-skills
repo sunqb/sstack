@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# Install sstack agent skills into the discovery directories of coding agents.
+# Conventions were taken from each tool's current docs (see comments below).
+# Idempotent: existing correct symlinks are left as-is; wrong sstack symlinks
+# are retargeted; real files or unrelated directories are skipped, not overwritten.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+用法:
+  sstack-install-skills [--agent claude|cursor|pi|codex|all] [--flow poteto|yetone|all]
+  sstack-install-skills -h|--help
+
+把 sstack 的技能以 symlink 安装到各编码 agent 会自动扫描的目录，之后只要对 AI 说一句话即可。
+
+  --agent  默认 all。各目标目录来自官方文档，不是猜测：
+           claude  ~/.claude/skills/          (Claude Code 个人技能)
+           cursor  ~/.cursor/skills/          (Cursor 用户级技能)
+           pi      ~/.pi/agent/skills/        (pi 文档: docs/skills.md)
+           codex   ~/.agents/skills/          (Codex 当前推荐位置)
+                   同时再链到 ~/.codex/skills/（Codex 仍识别的旧路径）
+  --flow   默认 all。会安装顶层路由技能 sstack，以及所选 flow 的技能。
+           两种 flow 的技能名称不重叠，可以同时安装，执行时仍只走用户指定的那一套。
+
+USAGE
+}
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="${SCRIPT_DIR}/${SCRIPT_SOURCE}" ;;
+  esac
+done
+BIN_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+SSTACK_ROOT="$(cd "${BIN_DIR}/.." && pwd)"
+
+AGENT="all"
+FLOW="all"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --agent)
+      [ "$#" -ge 2 ] || die "--agent 需要一个参数"
+      AGENT="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+      shift 2
+      ;;
+    --flow)
+      [ "$#" -ge 2 ] || die "--flow 需要一个参数"
+      FLOW="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+      shift 2
+      ;;
+    --*) die "未知选项：$1（见 --help）" ;;
+    *) die "多余的参数：$1" ;;
+  esac
+done
+
+case "$AGENT" in
+  claude|cursor|pi|codex|all) ;;
+  *) die "未知 --agent：$AGENT（可选：claude, cursor, pi, codex, all）" ;;
+esac
+case "$FLOW" in
+  poteto|yetone|all) ;;
+  *) die "未知 --flow：$FLOW（可选：poteto, yetone, all）" ;;
+esac
+
+# Collect skill directories to install (absolute paths).
+SKILL_DIRS=()
+if [ -f "${SSTACK_ROOT}/skills/sstack/SKILL.md" ]; then
+  SKILL_DIRS+=("${SSTACK_ROOT}/skills/sstack")
+fi
+collect_flow_skills() {
+  local flow="$1" d
+  for d in "${SSTACK_ROOT}/flows/${flow}/skills"/*; do
+    [ -d "$d" ] && [ -f "$d/SKILL.md" ] && SKILL_DIRS+=("$d")
+  done
+}
+if [ "$FLOW" = all ]; then
+  collect_flow_skills poteto
+  collect_flow_skills yetone
+else
+  collect_flow_skills "$FLOW"
+fi
+[ "${#SKILL_DIRS[@]}" -gt 0 ] || die "在 $SSTACK_ROOT 里找不到可安装的技能"
+
+# Destination roots for the selected agents.
+DEST_ROOTS=()
+add_dest() {
+  local root="$1"
+  local d
+  for d in "${DEST_ROOTS[@]+"${DEST_ROOTS[@]}"}"; do
+    [ "$d" = "$root" ] && return 0
+  done
+  DEST_ROOTS+=("$root")
+}
+
+HOME_DIR="${HOME:-}"
+[ -n "$HOME_DIR" ] || die "HOME 未设置"
+
+# Paths documented by each vendor (checked 2026-11):
+# Claude Code: ~/.claude/skills/<name>/SKILL.md
+# Cursor:      ~/.cursor/skills/<name>/SKILL.md
+# pi:          ~/.pi/agent/skills/<name>/SKILL.md (also reads ~/.agents/skills/)
+# Codex:       ~/.agents/skills (current); ~/.codex/skills still loaded as legacy
+if [ "$AGENT" = claude ] || [ "$AGENT" = all ]; then
+  add_dest "${HOME_DIR}/.claude/skills"
+fi
+if [ "$AGENT" = cursor ] || [ "$AGENT" = all ]; then
+  add_dest "${HOME_DIR}/.cursor/skills"
+fi
+if [ "$AGENT" = pi ] || [ "$AGENT" = all ]; then
+  add_dest "${HOME_DIR}/.pi/agent/skills"
+fi
+if [ "$AGENT" = codex ] || [ "$AGENT" = all ]; then
+  add_dest "${HOME_DIR}/.agents/skills"
+  add_dest "${HOME_DIR}/.codex/skills"
+fi
+
+created=0
+skipped=0
+updated=0
+warned=0
+
+link_one() {
+  local src="$1" dest_root="$2"
+  local name dest
+  name="$(basename "$src")"
+  dest="${dest_root}/${name}"
+  mkdir -p "$dest_root"
+  if [ -L "$dest" ]; then
+    local current
+    current="$(readlink "$dest")"
+    case "$current" in
+      /*) ;;
+      *) current="$(cd "$dest_root" && cd "$(dirname "$current")" && pwd)/$(basename "$current")" ;;
+    esac
+    if [ "$current" = "$src" ]; then
+      printf 'skip: %s (already linked)\n' "$dest"
+      skipped=$((skipped + 1))
+      return 0
+    fi
+    ln -sfn "$src" "$dest"
+    printf 'update: %s -> %s\n' "$dest" "$src"
+    updated=$((updated + 1))
+    return 0
+  fi
+  if [ -e "$dest" ]; then
+    printf 'warn: %s 已存在且不是 symlink，已跳过以免覆盖\n' "$dest"
+    warned=$((warned + 1))
+    skipped=$((skipped + 1))
+    return 0
+  fi
+  ln -s "$src" "$dest"
+  printf 'create: %s -> %s\n' "$dest" "$src"
+  created=$((created + 1))
+}
+
+echo "sstack-install-skills"
+echo "  root:   $SSTACK_ROOT"
+echo "  agent:  $AGENT"
+echo "  flow:   $FLOW"
+echo
+
+for dest_root in "${DEST_ROOTS[@]}"; do
+  for src in "${SKILL_DIRS[@]}"; do
+    link_one "$src" "$dest_root"
+  done
+done
+
+echo
+echo "done: created=$created updated=$updated skipped=$skipped warned=$warned"
+echo
+echo "之后对 AI 说一句即可，例如："
+echo "  用 sstack 的 poteto 流程接管这个项目"
+echo "  用 sstack 的 yetone 流程接管这个项目"
+echo "若某个 agent 尚未安装技能，把这句话交给它："
+echo "  读 $SSTACK_ROOT/SSTACK.md，按 poteto 流程接管当前项目"

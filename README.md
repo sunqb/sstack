@@ -1,8 +1,8 @@
 # sstack
 
-sstack 是一套**通用**的开发工作流工具包：你后面做的每个项目都可以用同一套思路接入，而不绑定某个产品或语言。
+sstack 是一套**给编码 agent 用的工作流技能包**。人类只说用哪一种流程，并在最后审查证据；探测技术栈、写入文档、跑验证、把纠正变成检查，都由 AI 执行。
 
-它把两种已经公开、但互相不同的方法论做成**互不混用**的 flow，用同一个安装器选一个装进仓库：
+它把两种已经公开、但互相不同的方法论做成**互不混用**的 flow：
 
 | | `poteto` | `yetone` |
 | --- | --- | --- |
@@ -13,37 +13,50 @@ sstack 是一套**通用**的开发工作流工具包：你后面做的每个项
 | 日常节奏 | 对照功能地图改、跑一条 `verify`、全绿再交付 | 可选的并行 loop 盯入口与反馈；人留下 UI/UX 与拍板；验证必须实际跑过 |
 | 适合 | 想把 agent 的重复错误直接卡死在工具链里 | 想让 agent 长期维护仓库，并用错题本自我迭代 |
 
-两种 flow 分目录存放（`flows/poteto/`、`flows/yetone/`），安装时只复制其中一套。共享、且不携带哲学的部分（安装器、语言 preset、`verify` 入口、可选 TLA+ / e2e）在 `core/`。
+两种 flow 分目录存放（`flows/poteto/`、`flows/yetone/`），一次只接入一套。共享、且不携带哲学的部分（安装器、语言 preset、`verify` 入口、可选 TLA+ / e2e）在 `core/`。agent 的总入口是 [SSTACK.md](SSTACK.md)。
 
-## 快速开始
+## 本地使用
 
-```sh
-git clone https://github.com/sunqb/sstack.git
-path/to/sstack/bin/sstack-init /path/to/your-project --flow poteto
-# 或
-path/to/sstack/bin/sstack-init /path/to/your-project --flow yetone
-```
-
-**必须显式写 `--flow`。** 没有默认 flow，安装器也不会提问；漏写会列出可选值并退出。
-
-可选参数：
+一次性把技能装进你的编码 agent，之后只要对 AI 说话。
 
 ```sh
-sstack-init TARGET --flow poteto --preset typescript
-sstack-init TARGET --flow yetone --preset go --with tla,e2e
+git clone https://github.com/sunqb/sstack.git ~/sstack
+export PATH="$HOME/sstack/bin:$PATH"   # 可写入 ~/.bashrc 或 ~/.zshrc
+sstack-install-skills                  # 默认安装给 Claude Code、Cursor、pi、Codex
 ```
 
-- `--preset typescript|python|java|go|shell`：未指定时自动检测。`package.json` → typescript；`pyproject.toml` / `requirements.txt` / `setup.py` 等 → python；`pom.xml` / `build.gradle` / `build.gradle.kts` → java；`go.mod` → go；否则 → shell。两种或以上语言信号同时出现时会要求你显式指定，不会猜。
-- `--with tla,e2e`：可选附加件，默认不装。`tla` 是一个小的 TLA+ 资源池模型；`e2e` 是 Playwright 截图走查和性质测试示例。
-- 安装器**不会覆盖已有文件**，再跑一次是安全的。
+macOS / Linux 用 bash 或 zsh。Windows 请在 WSL 或 Git Bash 里执行上面的命令（安装器是 bash 脚本）。
 
-然后在项目根执行：
+`sstack-install-skills` 会把技能 symlink 到各工具会自动扫描的目录（路径均来自官方文档，不是猜测）：
 
-```sh
-bash scripts/verify.sh
+- Claude Code：`~/.claude/skills/`
+- Cursor：`~/.cursor/skills/`
+- pi：`~/.pi/agent/skills/`
+- Codex：`~/.agents/skills/`（当前推荐），并额外链到仍被识别的旧路径 `~/.codex/skills/`
+
+可用 `--agent claude|cursor|pi|codex|all` 和 `--flow poteto|yetone|all` 缩小范围。再跑一次是安全的。
+
+然后打开任意项目，对 pi、Claude Code、Cursor 或 Codex 说一句：
+
+```
+用 sstack 的 poteto 流程接管这个项目
 ```
 
-工具或配置不存在的步骤会被跳过；已经启用并跑起来的步骤失败，则整个 verify 失败。全绿之前不要把工作标成完成。
+或：
+
+```
+用 sstack 的 yetone 流程接管这个项目
+```
+
+agent 会自己探测技术栈、调用安装器、按代码库写出真实的 `AGENTS.md` 等文档、跑 `verify`，并把证据交给你。之后你只要继续对话：纠正它时，它应按当前 flow 自动把纠正写成检查或错题本条目，并在声称完成前自己跑验证。
+
+若某个 agent 还没装上技能，把这句备用提示连路径一起发给它：
+
+```
+读 ~/sstack/SSTACK.md，按 poteto 流程接管当前项目
+```
+
+（yetone 则把其中的 poteto 改成 yetone。）
 
 ## 各 preset 会提供什么
 
@@ -53,38 +66,24 @@ bash scripts/verify.sh
 - **go**：`.golangci.yml`（含 depguard 依赖边界与 forbidigo 禁止 API 的示例）。verify 跑 `gofmt -l`（有输出即失败）、`go vet ./...`、`go test ./...`；已安装 `golangci-lint` 时再跑它。
 - **shell**（其他语言或纯脚本）：`Makefile.sstack.example`，以及 `scripts/verify.d/` 扩展点，把任意检查挂到同一条 verify 上。
 
-## 本地使用
+## 助手脚本
 
-把仓库放到自己的机器上，并把 `bin` 加进 PATH，之后在任意项目目录都能调用 `sstack-init`。
+人类日常不需要调用这些命令。它们是给 agent 用的：
 
-```sh
-git clone https://github.com/sunqb/sstack.git ~/sstack
-```
-
-macOS / Linux 使用 bash 或 zsh。把下面这行写入 `~/.bashrc` 或 `~/.zshrc` 后重新打开终端：
-
-```sh
-export PATH="$HOME/sstack/bin:$PATH"
-```
-
-Windows 请在 WSL 或 Git Bash 里用同一套命令。安装器是 bash 脚本，不能在普通 cmd 或未安装 Git Bash 的 PowerShell 里直接运行。
-
-然后：
-
-```sh
-sstack-init /path/to/your-project --flow poteto --preset go
-```
+- `bin/sstack-install-skills`：把技能装进本机 agent 的发现目录。
+- `bin/sstack-init`：把某一套 flow 的模板装进目标项目，不覆盖已有文件。必须显式指定 `--flow poteto|yetone`。`--preset` 可省略并由自动检测决定（`package.json` → typescript；`pyproject.toml` / `requirements.txt` 等 → python；`pom.xml` / `build.gradle(.kts)` → java；`go.mod` → go；否则 shell；多种信号同时出现则报错）。`--with tla,e2e` 默认关闭。
+- 项目里的 `scripts/verify.sh`：唯一验收入口。工具缺失则跳过；已启用的步骤失败则整体失败。
 
 ## 仓库结构
 
 ```
-bin/sstack-init          # 安装器
-core/                    # 与方法论无关的共享件
-  scripts/verify.sh
-  presets/               # typescript, python, java, go, shell
-  addons/                # tla, e2e
-flows/poteto/            # 模板、playbooks、skills
-flows/yetone/            # 模板、playbooks、skills（含 LESSONS.md 机制说明与来源）
+SSTACK.md                # agent 总入口（先读这个）
+skills/sstack/           # 路由技能
+bin/sstack-install-skills
+bin/sstack-init
+core/                    # verify、preset、addon（与方法论无关）
+flows/poteto/skills/     # sstack-poteto-adopt/correct/verify/garden
+flows/yetone/skills/     # sstack-yetone-adopt/lesson/retro/verify
 ```
 
 每个 flow 目录里的 `README.md` 写哲学和来源。yetone flow 的来源列表（Magpie 仓库文件、X 原帖、二手转写及其不确定点）见 [flows/yetone/README.md](flows/yetone/README.md)。

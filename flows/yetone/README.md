@@ -110,6 +110,8 @@ yetone 在 2026-10-13 左右的 X 主帖中称：没有魔法，用 Claude Code 
 | `docs/sstack/playbooks/` | 给人看的流程 |
 | `skills/` | 给 agent 的技能说明 |
 
+给 agent 的技能在 `skills/`：`sstack-yetone-adopt`、`sstack-yetone-lesson`、`sstack-yetone-retro`、`sstack-yetone-verify`。
+
 共享的 `scripts/verify.sh` 仍来自 `core/`。yetone 实践还强调：**记录实际跑过什么**；没跑的检查要写明未跑，不要省略。合并或发布前应在真实环境里跑过，而不是只看构建。
 
 ## 来源

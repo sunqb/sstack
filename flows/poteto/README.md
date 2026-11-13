@@ -29,7 +29,7 @@
 | `docs/sstack/playbooks/` | 给人看的短流程 |
 | `skills/` | 给 agent 用的技能说明 |
 
-共享的 `scripts/verify.sh` 与 preset / addon 来自 `core/`，不属于某一种哲学。
+给 agent 的技能在 `skills/`：`sstack-poteto-adopt`、`sstack-poteto-correct`、`sstack-poteto-verify`、`sstack-poteto-garden`。共享的 `scripts/verify.sh` 与 preset / addon 来自 `core/`，不属于某一种哲学。
 
 ## 来源说明
 

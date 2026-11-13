@@ -238,7 +238,14 @@ if [ -d "${FLOW_DIR}/playbooks" ]; then
   install_tree "${FLOW_DIR}/playbooks" "${TARGET}/docs/sstack/playbooks"
 fi
 if [ -d "${FLOW_DIR}/skills" ]; then
-  install_tree "${FLOW_DIR}/skills" "${TARGET}/skills"
+  # Project-local discovery dirs documented by Cursor/Codex/pi (.agents/skills)
+  # and Claude Code (.claude/skills). Only the selected flow is copied.
+  install_tree "${FLOW_DIR}/skills" "${TARGET}/.agents/skills"
+  install_tree "${FLOW_DIR}/skills" "${TARGET}/.claude/skills"
+fi
+if [ -f "${SSTACK_ROOT}/skills/sstack/SKILL.md" ]; then
+  install_file "${SSTACK_ROOT}/skills/sstack/SKILL.md" "${TARGET}/.agents/skills/sstack/SKILL.md"
+  install_file "${SSTACK_ROOT}/skills/sstack/SKILL.md" "${TARGET}/.claude/skills/sstack/SKILL.md"
 fi
 
 # 3) language preset

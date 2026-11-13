@@ -1,8 +1,11 @@
 # 新项目接入 poteto flow
 
-1. 在空目录运行：`path/to/sstack/bin/sstack-init . --flow poteto --preset <typescript|python|java|go|shell>`
-2. 需要形式化模型或截图走查时加上 `--with tla,e2e`。
-3. 把 preset 里的示例配置合并进项目（TypeScript 用 `package.scripts.example.json`，Python 用 `pyproject.sstack.toml`，Java 把 Checkstyle / Spotless / ArchUnit 示例并入构建，Go 按包名修改 `.golangci.yml`），不要覆盖已有依赖或构建文件。
-4. 填写 `AGENTS.md` 里的构建 / 测试命令和目录说明。
-5. 在 `docs/features.md` 先写下即将做的用户路径，再写代码。
-6. 把 `bash scripts/verify.sh` 接到本地习惯和 CI。全绿之前不合并、不发布。
+人类只需对编码 agent 说：
+
+```
+用 sstack 的 poteto 流程接管这个项目
+```
+
+由 agent 执行 `sstack-poteto-adopt`：探测技术栈、运行 `sstack-init`、按代码库写真实的 `AGENTS.md` 与功能地图、自己跑 `verify`，并把证据交回。不要把这些命令拆给人类去跑。
+
+需要形式化模型或截图走查时，agent 可在 init 时加上 `--with tla,e2e`。preset 示例配置要合并进项目，不要覆盖已有依赖或构建文件。

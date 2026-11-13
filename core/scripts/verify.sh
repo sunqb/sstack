@@ -14,6 +14,44 @@ failures=()
 
 is_exec() { command -v "$1" >/dev/null 2>&1; }
 
+require_tlc() { [ -f .sstack/require-tlc ]; }
+require_e2e() { [ -f .sstack/require-e2e ]; }
+
+# Prefer a project-local tools/tlc wrapper: it can use a portable JDK at
+# ~/.sstack/tools/jdk even when `java` is not on PATH.
+# Prints a command prefix as one line of words
+# (either "./tools/tlc", "tlc", "tlc2", or "java -XX:+UseParallelGC -cp JAR tlc2.TLC").
+find_tlc_invocation() {
+  if [ -x ./tools/tlc ]; then
+    printf '%s\n' ./tools/tlc
+    return 0
+  fi
+  if is_exec tlc; then
+    printf '%s\n' tlc
+    return 0
+  fi
+  if is_exec tlc2; then
+    printf '%s\n' tlc2
+    return 0
+  fi
+  if [ -x "${HOME:-}/.sstack/tools/jdk/bin/java" ]; then
+    export PATH="${HOME}/.sstack/tools/jdk/bin:${PATH}"
+  fi
+  if is_exec java; then
+    local jar
+    for jar in \
+      "${TLA2TOOLS_JAR:-}" \
+      "./tools/tla2tools.jar" \
+      "${HOME:-}/.sstack/tools/tla2tools.jar"
+    do
+      [ -n "$jar" ] && [ -f "$jar" ] || continue
+      printf 'java -XX:+UseParallelGC -cp %s tlc2.TLC\n' "$jar"
+      return 0
+    done
+  fi
+  return 1
+}
+
 skip() {
   printf 'skip: %s (%s)\n' "$1" "$2"
   skipped=$((skipped + 1))
@@ -301,49 +339,81 @@ else
 fi
 
 # --- TLA+ ---
+# Optional (default, including yetone): skip if no specs or no TLC.
+# Required (poteto when .sstack/require-tlc is present): missing TLC, missing
+# specs, or a spec without a matching .cfg is a failure, not a skip.
 tla_files=()
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   tla_files+=("$f")
-done < <(find . \( -path './.git' -o -path './node_modules' \) -prune -o -name '*.tla' -type f -print 2>/dev/null | sort)
+done < <(find . \( -path './.git' -o -path './node_modules' -o -path './tools' \) -prune -o -name '*.tla' -type f -print 2>/dev/null | sort)
 
-if [ "${#tla_files[@]}" -gt 0 ]; then
-  tlc_cmd=""
-  if is_exec tlc; then
-    tlc_cmd="tlc"
-  elif is_exec tlc2; then
-    tlc_cmd="tlc2"
-  fi
-  if [ -n "$tlc_cmd" ]; then
+if require_tlc && [ "${#tla_files[@]}" -eq 0 ]; then
+  fail "tla+"
+  printf 'required formal models (.sstack/require-tlc) but no .tla specs were found under spec/ or elsewhere\n'
+elif [ "${#tla_files[@]}" -eq 0 ]; then
+  skip "tla+" "no .tla specs"
+else
+  tlc_line=""
+  if tlc_line="$(find_tlc_invocation)"; then
+    # shellcheck disable=SC2206
+    tlc_words=($tlc_line)
     for spec in "${tla_files[@]}"; do
       cfg="${spec%.tla}.cfg"
       name="tlc $(basename "$spec")"
       if [ -f "$cfg" ]; then
-        run_named "$name" "$tlc_cmd" -config "$cfg" "$spec" || true
+        run_named "$name" "${tlc_words[@]}" -config "$cfg" "$spec" || true
+      elif require_tlc; then
+        fail "$name"
+        printf '%s has no matching .cfg\n' "$spec"
       else
         skip "$name" "no matching .cfg"
       fi
     done
+  elif require_tlc; then
+    fail "tla+"
+    printf 'required formal models but TLC was not found. Install a JDK and run bin/sstack-install-tlc, or put tla2tools.jar at tools/tla2tools.jar\n'
   else
-    skip "tla+" "found .tla specs but tlc/tlc2 is not installed"
+    skip "tla+" "found .tla specs but tlc/tlc2/tla2tools.jar is not available"
   fi
-else
-  skip "tla+" "no .tla specs"
 fi
 
 # --- E2E / Playwright ---
+# Optional (default): skip if no config, no browser runner, or no base URL.
+# Required (poteto when .sstack/require-e2e is present): missing runner or
+# missing tests is a failure. The project should start its own app (for
+# example Playwright webServer) so a manually exported base URL is not required.
+has_e2e_config=0
 if [ -f playwright.config.ts ] || [ -f playwright.config.js ] || [ -d e2e ]; then
-  if [ -z "${SSTACK_E2E_BASE_URL:-}" ] && [ -z "${PLAYWRIGHT_BASE_URL:-}" ]; then
-    skip "playwright" "set SSTACK_E2E_BASE_URL (or PLAYWRIGHT_BASE_URL) to enable"
-  elif [ -x node_modules/.bin/playwright ]; then
-    run_named "playwright" ./node_modules/.bin/playwright test
-  elif command -v playwright >/dev/null 2>&1; then
-    run_named "playwright" playwright test
-  else
-    skip "playwright" "playwright is not installed"
-  fi
-else
+  has_e2e_config=1
+fi
+
+if require_e2e && [ "$has_e2e_config" -eq 0 ]; then
+  fail "e2e"
+  printf 'required UI verification (.sstack/require-e2e) but no playwright config or e2e/ directory was found\n'
+elif [ "$has_e2e_config" -eq 0 ]; then
   skip "playwright" "no playwright config or e2e/ directory"
+else
+  pw_cmd=""
+  if [ -x node_modules/.bin/playwright ]; then
+    pw_cmd="./node_modules/.bin/playwright"
+  elif command -v playwright >/dev/null 2>&1; then
+    pw_cmd="playwright"
+  fi
+  if [ -z "$pw_cmd" ]; then
+    if require_e2e; then
+      fail "playwright"
+      printf 'required UI verification but playwright is not installed\n'
+    else
+      skip "playwright" "playwright is not installed"
+    fi
+  elif require_e2e; then
+    run_named "playwright" "$pw_cmd" test || true
+  elif [ -z "${SSTACK_E2E_BASE_URL:-}" ] && [ -z "${PLAYWRIGHT_BASE_URL:-}" ]; then
+    skip "playwright" "set SSTACK_E2E_BASE_URL (or PLAYWRIGHT_BASE_URL) to enable, or add Playwright webServer and .sstack/require-e2e"
+  else
+    run_named "playwright" "$pw_cmd" test || true
+  fi
 fi
 
 # --- Extension hooks ---

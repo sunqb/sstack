@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Install a JDK (if missing) and tla2tools.jar, then write a tlc wrapper.
+# Intended for agents in the poteto flow. Idempotent.
+# Usage: sstack-install-tlc [PROJECT_ROOT]
+# Places: PROJECT_ROOT/tools/tla2tools.jar, PROJECT_ROOT/tools/tlc
+# Also caches the jar at ~/.sstack/tools/tla2tools.jar for reuse.
+# If no system JRE can be installed, downloads a portable Eclipse Temurin JRE
+# into ~/.sstack/tools/jdk and points the wrapper at it.
+set -euo pipefail
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+PROJECT_ROOT="$(cd "${1:-.}" && pwd)"
+TOOLS_DIR="${PROJECT_ROOT}/tools"
+CACHE_DIR="${HOME:-/tmp}/.sstack/tools"
+PORTABLE_JDK="${CACHE_DIR}/jdk"
+# Pinned to the TLA+ v1.8.0 (Clarke) release. See https://github.com/tlaplus/tlaplus/releases
+JAR_URL="${SSTACK_TLA2TOOLS_URL:-https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar}"
+JAR_SHA1="${SSTACK_TLA2TOOLS_SHA1:-0b57675323babad8ab3815b1db9f30e75dac1cdb}"
+
+mkdir -p "$TOOLS_DIR" "$CACHE_DIR"
+
+resolve_java() {
+  if command -v java >/dev/null 2>&1; then
+    java -version 2>&1 | head -n 1
+    return 0
+  fi
+  if [ -x "${PORTABLE_JDK}/bin/java" ]; then
+    export JAVA_HOME="$PORTABLE_JDK"
+    export PATH="${JAVA_HOME}/bin:${PATH}"
+    java -version 2>&1 | head -n 1
+    return 0
+  fi
+  return 1
+}
+
+try_pkg_java() {
+  if command -v apt-get >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      sudo apt-get update -qq \
+        && { sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openjdk-21-jre-headless \
+          || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openjdk-17-jre-headless; } \
+        && return 0
+    else
+      apt-get update -qq \
+        && { DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openjdk-21-jre-headless \
+          || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openjdk-17-jre-headless; } \
+        && return 0
+    fi
+    return 1
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    brew install --quiet temurin || brew install --quiet openjdk
+    return $?
+  fi
+  if command -v sdk >/dev/null 2>&1; then
+    sdk install java
+    return $?
+  fi
+  return 1
+}
+
+install_portable_jre() {
+  if [ -x "${PORTABLE_JDK}/bin/java" ]; then
+    return 0
+  fi
+  local os arch
+  case "$(uname -s)" in
+    Linux) os=linux ;;
+    Darwin) os=mac ;;
+    *) printf 'warn: no portable JRE for OS %s\n' "$(uname -s)"; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=x64 ;;
+    aarch64|arm64) arch=aarch64 ;;
+    *) printf 'warn: no portable JRE for arch %s\n' "$(uname -m)"; return 1 ;;
+  esac
+  printf 'package manager did not provide a JRE; downloading a portable Eclipse Temurin JRE...\n'
+  local url url17 tarball extract found root
+  url="https://api.adoptium.net/v3/binary/latest/21/ga/${os}/${arch}/jre/hotspot/normal/eclipse?project=jdk"
+  url17="https://api.adoptium.net/v3/binary/latest/17/ga/${os}/${arch}/jre/hotspot/normal/eclipse?project=jdk"
+  tarball="$(mktemp)"
+  extract="$(mktemp -d)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --retry-delay 2 -o "$tarball" "$url" \
+      || curl -fL --retry 3 --retry-delay 2 -o "$tarball" "$url17" \
+      || { rm -f "$tarball"; rm -rf "$extract"; return 1; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$tarball" "$url" \
+      || wget -q -O "$tarball" "$url17" \
+      || { rm -f "$tarball"; rm -rf "$extract"; return 1; }
+  else
+    rm -rf "$extract"
+    return 1
+  fi
+  if ! tar -tzf "$tarball" >/dev/null 2>&1; then
+    rm -f "$tarball"; rm -rf "$extract"
+    printf 'warn: portable JRE download was not a tar.gz\n'
+    return 1
+  fi
+  tar -xzf "$tarball" -C "$extract"
+  found="$(find "$extract" -type f -path '*/bin/java' | head -n 1)"
+  if [ -z "$found" ]; then
+    rm -f "$tarball"; rm -rf "$extract"
+    printf 'warn: portable JRE archive had no bin/java\n'
+    return 1
+  fi
+  root="$(cd "$(dirname "$found")/.." && pwd)"
+  rm -rf "$PORTABLE_JDK"
+  mv "$root" "$PORTABLE_JDK"
+  rm -f "$tarball"
+  rm -rf "$extract"
+  printf 'create: %s\n' "$PORTABLE_JDK"
+}
+
+ensure_java() {
+  if resolve_java; then
+    return 0
+  fi
+  printf 'java not found; trying to install a JRE...\n'
+  try_pkg_java || true
+  if resolve_java; then
+    return 0
+  fi
+  install_portable_jre || true
+  if resolve_java; then
+    return 0
+  fi
+  die "no java on PATH and could not install a JRE (apt/brew/sdk and portable Temurin all failed)"
+}
+
+sha1_of() {
+  if command -v sha1sum >/dev/null 2>&1; then
+    sha1sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 1 "$1" | awk '{print $1}'
+  else
+    die "need sha1sum or shasum to verify tla2tools.jar"
+  fi
+}
+
+fetch_jar() {
+  local dest="$1"
+  if [ -f "$dest" ] && [ "$(sha1_of "$dest")" = "$JAR_SHA1" ]; then
+    printf 'skip: %s already present and checksum matches\n' "$dest"
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$JAR_URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$tmp" "$JAR_URL"
+  else
+    rm -f "$tmp"
+    die "need curl or wget to download tla2tools.jar"
+  fi
+  local got
+  got="$(sha1_of "$tmp")"
+  if [ "$got" != "$JAR_SHA1" ]; then
+    rm -f "$tmp"
+    die "tla2tools.jar checksum mismatch (got $got, expected $JAR_SHA1)"
+  fi
+  mv "$tmp" "$dest"
+  printf 'create: %s\n' "$dest"
+}
+
+write_wrapper() {
+  local jar="$1" wrapper="$2"
+  cat > "$wrapper" <<'WRAP'
+#!/usr/bin/env bash
+set -euo pipefail
+JAR="$(cd "$(dirname "$0")" && pwd)/tla2tools.jar"
+if [ ! -f "$JAR" ]; then
+  printf 'error: %s not found\n' "$JAR" >&2
+  exit 1
+fi
+JAVA_BIN=""
+if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+  JAVA_BIN="${JAVA_HOME}/bin/java"
+elif [ -x "${HOME:-}/.sstack/tools/jdk/bin/java" ]; then
+  JAVA_BIN="${HOME}/.sstack/tools/jdk/bin/java"
+elif command -v java >/dev/null 2>&1; then
+  JAVA_BIN="$(command -v java)"
+else
+  printf 'error: no java on PATH, JAVA_HOME, or ~/.sstack/tools/jdk\n' >&2
+  exit 1
+fi
+exec "$JAVA_BIN" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"
+WRAP
+  chmod +x "$wrapper"
+}
+
+ensure_java
+CACHE_JAR="${CACHE_DIR}/tla2tools.jar"
+fetch_jar "$CACHE_JAR"
+cp "$CACHE_JAR" "${TOOLS_DIR}/tla2tools.jar"
+write_wrapper "${TOOLS_DIR}/tla2tools.jar" "${TOOLS_DIR}/tlc"
+printf 'tlc wrapper: %s\n' "${TOOLS_DIR}/tlc"
+# smoke: confirm the TLC class loads (exit code varies by version)
+help_log="$(mktemp)"
+if "${TOOLS_DIR}/tlc" -h >"$help_log" 2>&1 \
+   || grep -qi 'tlc' "$help_log"; then
+  printf 'ok: TLC class loaded\n'
+else
+  printf 'warn: could not confirm TLC help output; jar is in place, try tools/tlc on a spec\n'
+  cat "$help_log" || true
+fi
+rm -f "$help_log"

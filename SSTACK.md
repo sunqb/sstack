@@ -6,7 +6,7 @@
 
 sstack 有两套**互不混用**的方法论：
 
-- **poteto**：确定性检查优先。纠正必须变成 lint / 测试 / 类型规则，只在 `docs/corrections.md` 留一行对照。禁止创建 `LESSONS.md`。
+- **poteto**：确定性检查优先。纠正必须变成 lint / 测试 / 类型规则，只在 `docs/corrections.md` 留一行对照。禁止创建 `LESSONS.md`。 是否写 TLA+、是否做 UI 走查，由 poteto 技能按书面标准判定，**不要**用 `--with tla,e2e`。
 - **yetone**：以 `LESSONS.md` 错题本为中枢（规则 + 原因 + 证据 + Seen 日期；满 3 个不同日期升格到 `docs/code-standards.md`）。不要改用 poteto 的 `corrections.md` 代替错题本。
 
 人类的一句话就是你的触发条件：
@@ -24,5 +24,6 @@ sstack 有两套**互不混用**的方法论：
 
 - `$SSTACK_ROOT/bin/sstack-init`：把所选 flow 的模板装进当前项目，不覆盖已有文件
 - `$SSTACK_ROOT/bin/sstack-install-skills`：把技能安装到本机 agent 的发现目录，便于以后自动加载
+- `$SSTACK_ROOT/bin/sstack-install-tlc`：给当前项目安装 JDK（如缺；系统包管理器失败时下载便携 Temurin 到 `~/.sstack/tools/jdk`）和 `tla2tools.jar`，供 poteto 在判定需要形式化模型时调用
 
 不要混装两套 flow。项目里若已有 `.sstack/flow`，遵守它；与用户指定的不一致时先说明再停，不要擅自改。

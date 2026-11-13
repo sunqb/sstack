@@ -71,8 +71,9 @@ agent 会自己探测技术栈、调用安装器、按代码库写出真实的 `
 人类日常不需要调用这些命令。它们是给 agent 用的：
 
 - `bin/sstack-install-skills`：把技能装进本机 agent 的发现目录。
-- `bin/sstack-init`：把某一套 flow 的模板装进目标项目，不覆盖已有文件。必须显式指定 `--flow poteto|yetone`。`--preset` 可省略并由自动检测决定（`package.json` → typescript；`pyproject.toml` / `requirements.txt` 等 → python；`pom.xml` / `build.gradle(.kts)` → java；`go.mod` → go；否则 shell；多种信号同时出现则报错）。`--with tla,e2e` 默认关闭。
-- 项目里的 `scripts/verify.sh`：唯一验收入口。工具缺失则跳过；已启用的步骤失败则整体失败。
+- `bin/sstack-init`：把某一套 flow 的模板装进目标项目，不覆盖已有文件。必须显式指定 `--flow poteto|yetone`。`--preset` 可省略并由自动检测决定（`package.json` → typescript；`pyproject.toml` / `requirements.txt` 等 → python；`pom.xml` / `build.gradle(.kts)` → java；`go.mod` → go；否则 shell；多种信号同时出现则报错）。`--with tla,e2e` 仍可用于手工或 yetone 侧拷贝示例；**poteto adopt 必须忽略它**，改由技能判定是否写 TLA+ 或 UI 走查。
+- `bin/sstack-install-tlc`：给项目安装 JDK（如缺）和 TLC（`tla2tools.jar` + `tools/tlc`）。poteto 在判定需要形式化模型时调用。
+- 项目里的 `scripts/verify.sh`：唯一验收入口。默认情况下工具缺失则跳过；已启用的步骤失败则整体失败。若存在 `.sstack/require-tlc` 或 `.sstack/require-e2e`，对应步骤改为必跑，缺工具即失败。
 
 ## 仓库结构
 

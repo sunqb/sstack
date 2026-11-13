@@ -86,6 +86,23 @@ looks_like_python_project() {
     || [ -f setup.cfg ] || [ -f setup.py ] || [ -f pyproject.sstack.toml ]
 }
 
+looks_like_java_project() {
+  [ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ]
+}
+
+looks_like_go_project() { [ -f go.mod ]; }
+
+file_mentions() {
+  local pattern="$1"
+  shift
+  local f
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    grep -Eiq -- "$pattern" "$f" && return 0
+  done
+  return 1
+}
+
 # --- TypeScript / JavaScript ---
 if looks_like_js_project; then
   if has_npm_script typecheck; then
@@ -171,6 +188,89 @@ if looks_like_python_project; then
   fi
 else
   skip "python" "no pyproject.toml / requirements.txt / setup.py"
+fi
+
+
+# --- Java (Maven / Gradle) ---
+if looks_like_java_project; then
+  maven_cmd=""
+  if [ -f pom.xml ]; then
+    if [ -x ./mvnw ]; then
+      maven_cmd="./mvnw"
+    elif is_exec mvn; then
+      maven_cmd="mvn"
+    fi
+    if [ -n "$maven_cmd" ]; then
+      run_named "maven test" $maven_cmd -B -q test
+      if file_mentions 'spotless' pom.xml; then
+        run_named "maven spotless:check" $maven_cmd -B -q spotless:check
+      else
+        skip "maven spotless" "spotless not configured in pom.xml"
+      fi
+      if file_mentions 'checkstyle' pom.xml; then
+        run_named "maven checkstyle:check" $maven_cmd -B -q checkstyle:check
+      else
+        skip "maven checkstyle" "checkstyle not configured in pom.xml"
+      fi
+    else
+      skip "maven" "found pom.xml but mvnw/mvn is not available"
+    fi
+  fi
+
+  gradle_cmd=""
+  if [ -f build.gradle ] || [ -f build.gradle.kts ]; then
+    if [ -x ./gradlew ]; then
+      gradle_cmd="./gradlew"
+    elif is_exec gradle; then
+      gradle_cmd="gradle"
+    fi
+    if [ -n "$gradle_cmd" ]; then
+      run_named "gradle test" $gradle_cmd --quiet test
+      if file_mentions 'spotless' build.gradle build.gradle.kts settings.gradle settings.gradle.kts; then
+        run_named "gradle spotlessCheck" $gradle_cmd --quiet spotlessCheck
+      else
+        skip "gradle spotless" "spotless not configured"
+      fi
+      if file_mentions 'checkstyle' build.gradle build.gradle.kts settings.gradle settings.gradle.kts; then
+        run_named "gradle checkstyleMain" $gradle_cmd --quiet checkstyleMain
+      else
+        skip "gradle checkstyle" "checkstyle not configured"
+      fi
+    else
+      skip "gradle" "found Gradle build file but gradlew/gradle is not available"
+    fi
+  fi
+else
+  skip "java" "no pom.xml or build.gradle(.kts)"
+fi
+
+# --- Go ---
+if looks_like_go_project; then
+  if ! is_exec go; then
+    skip "go" "go toolchain is not installed"
+  else
+    go_files="$(find . \( -path './.git' -o -path './vendor' \) -prune -o -name '*.go' -type f -print | sed 's|^\./||' | sort)"
+    if [ -z "$go_files" ]; then
+      skip "gofmt" "no .go files"
+    else
+      unformatted="$(printf '%s\n' "$go_files" | xargs gofmt -l)"
+      if [ -n "$unformatted" ]; then
+        fail "gofmt -l"
+        printf '%s\n' "$unformatted"
+      else
+        pass "gofmt -l"
+      fi
+    fi
+    run_named "go vet" go vet ./...
+    run_named "go test" go test ./...
+    if is_exec golangci-lint; then
+      run_named "golangci-lint" golangci-lint run
+    else
+      skip "golangci-lint" "golangci-lint not installed"
+    fi
+  fi
+else
+  skip "go" "no go.mod"
 fi
 
 # --- Shell ---

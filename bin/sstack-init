@@ -6,7 +6,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 用法:
-  sstack-init [TARGET_DIR] --flow poteto|yetone [--preset typescript|python|shell] [--with tla,e2e]
+  sstack-init [TARGET_DIR] --flow poteto|yetone [--preset typescript|python|java|go|shell] [--with tla,e2e]
   sstack-init -h|--help
 
 必须显式指定 --flow。两种方法论互相隔离，没有默认值。
@@ -17,13 +17,15 @@ usage() {
            到 code-standards，以及真实环境验证。
 
 选项:
-  --preset  typescript | python | shell
+  --preset  typescript | python | java | go | shell
             未指定时按 TARGET 自动检测：
               package.json                              → typescript
               pyproject.toml / requirements*.txt /
               setup.cfg / setup.py                      → python
+              pom.xml / build.gradle / build.gradle.kts → java
+              go.mod                                    → go
               其他                                      → shell
-            若同时出现 typescript 与 python 信号，则退出并要求显式指定。
+            若同时出现两种或以上语言信号，则退出并要求显式指定。
   --with    逗号分隔的可选附加件，默认不安装。目前支持: tla, e2e
 USAGE
 }
@@ -60,7 +62,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --preset)
-      [ "$#" -ge 2 ] || die "--preset 需要一个参数：typescript、python 或 shell"
+      [ "$#" -ge 2 ] || die "--preset 需要一个参数：typescript、python、java、go 或 shell"
       PRESET="$2"
       shift 2
       ;;
@@ -97,7 +99,7 @@ error: 必须指定 --flow poteto 或 --flow yetone（两种方法论互相隔�
   poteto  确定性检查优先，短 AGENTS.md，不使用 LESSONS.md
   yetone  以 LESSONS.md 错题本为核心，配合并行 loop 与规则升格
 
-用法: sstack-init [TARGET_DIR] --flow poteto|yetone [--preset typescript|python|shell] [--with tla,e2e]
+用法: sstack-init [TARGET_DIR] --flow poteto|yetone [--preset typescript|python|java|go|shell] [--with tla,e2e]
 ERR
   exit 2
 fi
@@ -121,18 +123,21 @@ has_py_signal() {
     || [ -f "$TARGET/requirements-dev.txt" ] || [ -f "$TARGET/setup.cfg" ] \
     || [ -f "$TARGET/setup.py" ]
 }
+has_java_signal() {
+  [ -f "$TARGET/pom.xml" ] || [ -f "$TARGET/build.gradle" ] || [ -f "$TARGET/build.gradle.kts" ]
+}
+has_go_signal() { [ -f "$TARGET/go.mod" ]; }
 
 if [ -z "$PRESET" ]; then
-  ts=0 py=0
-  has_ts_signal && ts=1
-  has_py_signal && py=1
-  if [ "$ts" -eq 1 ] && [ "$py" -eq 1 ]; then
-    die "TARGET 同时存在 package.json 与 Python 项目文件，无法自动选择 preset，请显式传入 --preset typescript|python|shell"
-  elif [ "$ts" -eq 1 ]; then
-    PRESET="typescript"
-    DETECTED="auto"
-  elif [ "$py" -eq 1 ]; then
-    PRESET="python"
+  signals=()
+  has_ts_signal && signals+=(typescript)
+  has_py_signal && signals+=(python)
+  has_java_signal && signals+=(java)
+  has_go_signal && signals+=(go)
+  if [ "${#signals[@]}" -gt 1 ]; then
+    die "TARGET 同时存在多种项目信号（${signals[*]}），无法自动选择 preset，请显式传入 --preset typescript|python|java|go|shell"
+  elif [ "${#signals[@]}" -eq 1 ]; then
+    PRESET="${signals[0]}"
     DETECTED="auto"
   else
     PRESET="shell"
@@ -144,11 +149,13 @@ else
 fi
 
 case "$PRESET" in
-  typescript|python|shell) ;;
+  typescript|python|java|go|shell) ;;
   ts|js|node|frontend) PRESET="typescript" ;;
   py|python3) PRESET="python" ;;
+  maven|gradle) PRESET="java" ;;
+  golang) PRESET="go" ;;
   sh|generic|other) PRESET="shell" ;;
-  *) die "未知 preset：$PRESET（可选：typescript, python, shell）" ;;
+  *) die "未知 preset：$PRESET（可选：typescript, python, java, go, shell）" ;;
 esac
 
 PRESET_DIR="${SSTACK_ROOT}/core/presets/${PRESET}"
@@ -285,6 +292,14 @@ case "$PRESET" in
     ;;
   python)
     echo "  3. Python preset 写在 pyproject.sstack.toml。空项目可改名为 pyproject.toml；已有项目请合并 [tool.ruff] / [tool.mypy] / [tool.pytest.ini_options] / [tool.pyright]。"
+    ;;
+  java)
+    echo "  3. Java preset 提供 checkstyle.xml、Spotless 片段和 ArchUnit 边界测试示例。"
+    echo "     把插件片段合并进已有 pom.xml 或 build.gradle(.kts)，不要覆盖构建文件。verify 会优先使用 ./mvnw 或 ./gradlew。"
+    ;;
+  go)
+    echo "  3. Go preset 提供 .golangci.yml（含 depguard 与 forbidigo 示例）。请按项目包名修改后再依赖它。"
+    echo "     verify 会跑 gofmt -l、go vet、go test，并在已安装时跑 golangci-lint。"
     ;;
   shell)
     echo "  3. 通用 preset 提供 Makefile.sstack.example。把你的检查接到 scripts/verify.sh，或在 scripts/verify.d/ 放可执行钩子。"

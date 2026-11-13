@@ -2,7 +2,7 @@
 
 `sstack-init` 不会覆盖已有文件。
 
-1. `sstack-init /path/to/project --flow yetone`。若项目里已有 `AGENTS.md` 或 `CLAUDE.md`，把模板里的阅读路由手工合并进去：至少要能指向 `LESSONS.md` 与 `docs/code-standards.md`。
+1. `sstack-init /path/to/project --flow yetone`（可加 `--preset java` 或 `--preset go` 等；多种语言信号同时存在时必须显式指定）。若项目里已有 `AGENTS.md` 或 `CLAUDE.md`，把模板里的阅读路由手工合并进去：至少要能指向 `LESSONS.md` 与 `docs/code-standards.md`。
 2. 若已有很长的 `CLAUDE.md`，不要把错题本全文贴进去。保持入口瘦，细则放独立文件。
 3. 用最近一段时间的提交做一次复盘，按格式种下第一批 `LESSONS.md` 条目。没有证据的不要编。
 4. 已经反复出现的问题（满 3 个不同日期）直接写入 `docs/code-standards.md`，并在 LESSONS 的 Moved 一节索引。

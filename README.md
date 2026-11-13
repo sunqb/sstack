@@ -30,10 +30,10 @@ path/to/sstack/bin/sstack-init /path/to/your-project --flow yetone
 
 ```sh
 sstack-init TARGET --flow poteto --preset typescript
-sstack-init TARGET --flow yetone --preset python --with tla,e2e
+sstack-init TARGET --flow yetone --preset go --with tla,e2e
 ```
 
-- `--preset typescript|python|shell`：未指定时自动检测。存在 `package.json` → typescript；存在 `pyproject.toml` / `requirements.txt` / `setup.py` 等 → python；否则 → shell。两种信号同时出现时会要求你显式指定，不会猜。
+- `--preset typescript|python|java|go|shell`：未指定时自动检测。`package.json` → typescript；`pyproject.toml` / `requirements.txt` / `setup.py` 等 → python；`pom.xml` / `build.gradle` / `build.gradle.kts` → java；`go.mod` → go；否则 → shell。两种或以上语言信号同时出现时会要求你显式指定，不会猜。
 - `--with tla,e2e`：可选附加件，默认不装。`tla` 是一个小的 TLA+ 资源池模型；`e2e` 是 Playwright 截图走查和性质测试示例。
 - 安装器**不会覆盖已有文件**，再跑一次是安全的。
 
@@ -49,7 +49,31 @@ bash scripts/verify.sh
 
 - **typescript**（Node / 前端）：严格的 `tsconfig.strict.json`、ESLint flat 配置（import 边界、禁止高风险 API、自定义规则示例）、`package.scripts.example.json`（合并进你的 `package.json`，不会丢一个假的依赖清单进仓库）。
 - **python**（后端 / 脚本）：`pyproject.sstack.toml`，含 ruff、mypy / pyright、pytest。空项目可改名为 `pyproject.toml`；已有项目请合并对应的 `[tool.*]` 表。
+- **java**（Maven / Gradle）：`checkstyle.xml`、Spotless 片段，以及 ArchUnit 分层边界测试示例。请把插件合并进已有 `pom.xml` 或 `build.gradle(.kts)`，不要覆盖构建文件。verify 优先使用 `./mvnw` 或 `./gradlew`，跑编译与测试；若已配置 Spotless / Checkstyle 再跑对应检查。
+- **go**：`.golangci.yml`（含 depguard 依赖边界与 forbidigo 禁止 API 的示例）。verify 跑 `gofmt -l`（有输出即失败）、`go vet ./...`、`go test ./...`；已安装 `golangci-lint` 时再跑它。
 - **shell**（其他语言或纯脚本）：`Makefile.sstack.example`，以及 `scripts/verify.d/` 扩展点，把任意检查挂到同一条 verify 上。
+
+## 本地使用
+
+把仓库放到自己的机器上，并把 `bin` 加进 PATH，之后在任意项目目录都能调用 `sstack-init`。
+
+```sh
+git clone https://github.com/sunqb/sstack.git ~/sstack
+```
+
+macOS / Linux 使用 bash 或 zsh。把下面这行写入 `~/.bashrc` 或 `~/.zshrc` 后重新打开终端：
+
+```sh
+export PATH="$HOME/sstack/bin:$PATH"
+```
+
+Windows 请在 WSL 或 Git Bash 里用同一套命令。安装器是 bash 脚本，不能在普通 cmd 或未安装 Git Bash 的 PowerShell 里直接运行。
+
+然后：
+
+```sh
+sstack-init /path/to/your-project --flow poteto --preset go
+```
 
 ## 仓库结构
 
@@ -57,7 +81,7 @@ bash scripts/verify.sh
 bin/sstack-init          # 安装器
 core/                    # 与方法论无关的共享件
   scripts/verify.sh
-  presets/               # typescript, python, shell
+  presets/               # typescript, python, java, go, shell
   addons/                # tla, e2e
 flows/poteto/            # 模板、playbooks、skills
 flows/yetone/            # 模板、playbooks、skills（含 LESSONS.md 机制说明与来源）

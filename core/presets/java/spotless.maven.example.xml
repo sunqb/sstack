@@ -1,0 +1,18 @@
+<!-- 把这个 plugin 合并进 pom.xml 的 <build><plugins>。不要用本文件覆盖整个 POM。 -->
+<plugin>
+  <groupId>com.diffplug.spotless</groupId>
+  <artifactId>spotless-maven-plugin</artifactId>
+  <version>2.44.3</version>
+  <executions>
+    <execution>
+      <goals>
+        <goal>check</goal>
+      </goals>
+    </execution>
+  </executions>
+  <configuration>
+    <java>
+      <googleJavaFormat/>
+    </java>
+  </configuration>
+</plugin>
